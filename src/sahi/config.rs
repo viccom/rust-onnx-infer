@@ -59,6 +59,13 @@ pub struct SahiConfig {
     pub exclude_class_names: HashSet<String>,
     /// 按类别 id 排除的预测（官方 exclude_classes_by_id）
     pub exclude_class_ids: HashSet<i32>,
+    /// 合并前按分数过滤：低于该值的切片/整图预测不进入合并（非官方扩展）。
+    ///
+    /// 用途：引擎以低阈值构造、按请求动态提高阈值时，在此过滤可使结果与
+    /// "引擎直接以该阈值构造"严格等价（类内 NMS 保序）；若改为合并后再过滤，
+    /// 低分碎片会先被 GREEDYNMM 并进高分框放大其几何。
+    /// 与引擎阈值取 max 作为有效阈值参与 LOW_MODEL_CONFIDENCE 判断。
+    pub min_confidence: Option<f32>,
     /// 是否输出每个切片的预测数量日志
     pub verbose: bool,
 }
@@ -80,6 +87,7 @@ impl Default for SahiConfig {
             merge_buffer_length: None,
             exclude_class_names: HashSet::new(),
             exclude_class_ids: HashSet::new(),
+            min_confidence: None,
             verbose: false,
         }
     }

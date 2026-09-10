@@ -103,16 +103,21 @@ fn predict_sliced<T>(
         );
     }
 
-    // 官方：低置信度阈值时自动切换 NMS/IOU，避免合并操作放大 bbox
+    // 官方：低置信度阈值时自动切换 NMS/IOU，避免合并操作放大 bbox。
+    // 有效阈值 = max(引擎阈值, min_confidence)：合并前已按 min_confidence 过滤时，
+    // 低分碎片不会进入合并，无需为引擎的低构造阈值切换策略。
+    let effective_threshold = config
+        .min_confidence
+        .map_or(confidence_threshold, |m| confidence_threshold.max(m));
     let mut postprocess_type = config.postprocess_type;
     let mut match_metric = config.match_metric;
     if !config.force_postprocess_type
-        && confidence_threshold < SahiConfig::LOW_MODEL_CONFIDENCE
+        && effective_threshold < SahiConfig::LOW_MODEL_CONFIDENCE
         && postprocess_type != PostprocessType::Nms
     {
         tracing::warn!(
             "引擎置信度阈值较低（{}），SAHI postprocess 自动切换为 NMS/IOU（官方 LOW_MODEL_CONFIDENCE 行为；可用 force_postprocess_type(true) 禁用）",
-            confidence_threshold
+            effective_threshold
         );
         postprocess_type = PostprocessType::Nms;
         match_metric = MatchMetric::Iou;
@@ -224,7 +229,86 @@ fn collect_predictions<T>(
             continue;
         }
         if let Some(boxed) = adapter.to_box(item, shift_x, shift_y, full_width, full_height) {
+            if config.min_confidence.is_some_and(|m| boxed.score < m) {
+                continue;
+            }
             out.push(boxed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 固定输出:高分小框 + 同位置低分大框(IOS=1,GREEDYNMM 必合并成 union)。
+    struct TwoBoxPredictor {
+        low_score: f64,
+    }
+
+    impl SahiSinglePredictor<Detection> for TwoBoxPredictor {
+        fn predict_single(&self, _image: &Image) -> Result<Vec<Detection>> {
+            Ok(vec![
+                Detection::new("obj", 0, 10.0, 10.0, 50.0, 50.0, 0.8),
+                Detection::new("obj", 0, 10.0, 10.0, 90.0, 90.0, self.low_score),
+            ])
+        }
+    }
+
+    /// 200x200 单片配置(切片 = 整图,关闭整图标准预测避免重复)。
+    fn single_slice_config() -> SahiConfig {
+        let mut cfg = SahiConfig::default();
+        cfg.slice_width = Some(200);
+        cfg.slice_height = Some(200);
+        cfg.auto_slice_resolution = false;
+        cfg.perform_standard_prediction = false;
+        cfg
+    }
+
+    #[test]
+    fn min_confidence_should_drop_low_score_boxes_before_merge() {
+        let image = Image::new(200, 200, 3);
+        let predictor = TwoBoxPredictor { low_score: 0.15 };
+
+        // 无 min_confidence:低分大框参与合并,union 把高分框放大到 90
+        let cfg = single_slice_config();
+        let r = predict_sliced(&image, &cfg, &DetectionAdapter, 0.1, &predictor).unwrap();
+        assert_eq!(r.detections.len(), 1);
+        assert!(
+            (r.detections[0].x2() - 90.0).abs() < 1e-3,
+            "无过滤时 union 应放大到 90,实际 {}",
+            r.detections[0].x2()
+        );
+
+        // min_confidence=0.25:低分框在合并前丢弃,高分框几何原样保留——
+        // 与引擎直接以 0.25 构造的结果严格等价(类内 NMS 保序)
+        let mut cfg = single_slice_config();
+        cfg.min_confidence = Some(0.25);
+        let r = predict_sliced(&image, &cfg, &DetectionAdapter, 0.1, &predictor).unwrap();
+        assert_eq!(r.detections.len(), 1);
+        assert!(
+            (r.detections[0].x2() - 50.0).abs() < 1e-3,
+            "过滤后高分框几何应原样保留(50),实际 {}",
+            r.detections[0].x2()
+        );
+        assert!((r.detections[0].confidence() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn low_model_confidence_switch_should_use_effective_threshold() {
+        // 两框都 >= 0.3:IoU=0.25(不抑制) vs IOS=1.0(必合并),可区分 NMS/IOU 与 GREEDYNMM/IOS
+        let image = Image::new(200, 200, 3);
+        let predictor = TwoBoxPredictor { low_score: 0.5 };
+
+        // 引擎阈值 0.05 < LOW_MODEL_CONFIDENCE 且无 min_confidence → 官方行为切 NMS/IOU,两框都保留
+        let cfg = single_slice_config();
+        let r = predict_sliced(&image, &cfg, &DetectionAdapter, 0.05, &predictor).unwrap();
+        assert_eq!(r.detections.len(), 2, "低阈值无过滤应切换 NMS/IOU,IoU 0.25 两框都留");
+
+        // min_confidence=0.3 使有效阈值 0.3 >= LOW_MODEL_CONFIDENCE → 保持 GREEDYNMM/IOS,合并为一
+        let mut cfg = single_slice_config();
+        cfg.min_confidence = Some(0.3);
+        let r = predict_sliced(&image, &cfg, &DetectionAdapter, 0.05, &predictor).unwrap();
+        assert_eq!(r.detections.len(), 1, "有效阈值 0.3 应保持 GREEDYNMM,IOS 1.0 合并为一");
     }
 }
