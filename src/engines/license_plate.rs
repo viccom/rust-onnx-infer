@@ -303,8 +303,13 @@ impl LicensePlateEngine {
     /// 车牌检测 → 逐牌裁剪矫正 → LPRNet 识别 → 颜色启发式定类型。
     pub fn recognize_impl(&self, image: &Image) -> Result<Vec<PlateResult>> {
         let plates = self.detect_plates(image)?;
+        self.recognize_boxes(image, &plates)
+    }
+
+    /// 对已检出的候选框逐牌识别（`recognize_impl` 与 `recognize_sliced` 共用后段）。
+    fn recognize_boxes(&self, image: &Image, plates: &[PlateBox]) -> Result<Vec<PlateResult>> {
         let mut results = Vec::with_capacity(plates.len());
-        for plate in &plates {
+        for plate in plates {
             let crop = crop_plate_box(image, plate)?;
             let (text, rec_score) = self.recognizer.recognize_crop(&crop)?;
             results.push(PlateResult {
@@ -316,6 +321,52 @@ impl LicensePlateEngine {
         }
         log_results(&results);
         Ok(results)
+    }
+
+    /// 大图切片识别（SAHI 思路）：按 `slice_size` 重叠切片逐片检测 →
+    /// 坐标还原 → 全局 NMS → 原图逐牌识别。
+    ///
+    /// 场景：高分辨率图（多车牌拼图/远景停车场）直接整图送检会被 mnet 的
+    /// 640 输入缩小而丢失小牌（实测 2483×1902 拼图 9 牌整图仅检 6，且降
+    /// 检测阈值至 0.05 只增假阳性不增真牌——信息已物理丢失）。切片后每片
+    /// 车牌接近原始分辨率，可检。切片尺寸建议与检测输入一致（640），
+    /// 重叠 0.2；图小于单片时自动退化为整图识别。
+    pub fn recognize_sliced(
+        &self,
+        image: &Image,
+        slice_size: i32,
+        overlap_ratio: f64,
+    ) -> Result<Vec<PlateResult>> {
+        let bboxes = crate::sahi::slicer::get_slice_bboxes(
+            image.height() as i32,
+            image.width() as i32,
+            Some(slice_size),
+            Some(slice_size),
+            false,
+            overlap_ratio,
+            overlap_ratio,
+        )?;
+        if bboxes.len() <= 1 {
+            return self.recognize_impl(image);
+        }
+        tracing::debug!(
+            "车牌切片识别: {}x{} → {} 片(尺寸 {}, 重叠 {})",
+            image.width(),
+            image.height(),
+            bboxes.len(),
+            slice_size,
+            overlap_ratio
+        );
+        let mut candidates: Vec<PlateBox> = Vec::new();
+        for [x0, y0, x1, y1] in bboxes {
+            let tile =
+                image.crop(x0 as usize, y0 as usize, (x1 - x0) as usize, (y1 - y0) as usize)?;
+            for pb in self.detect_plates(&tile)? {
+                candidates.push(offset_plate_box(pb, x0 as f32, y0 as f32));
+            }
+        }
+        let plates = nms_plates(candidates, self.nms_threshold);
+        self.recognize_boxes(image, &plates)
     }
 
     /// OCR 备选识别：车牌检测 + 裁剪 + 库内 PP-OCRv4 rec 读牌。
@@ -634,6 +685,20 @@ fn crop_plate_box(image: &Image, plate: &PlateBox) -> Result<Image> {
         }
     }
     crop_with_padding(image, plate.xyxy, 0.0)
+}
+
+/// 切片坐标还原：把切片内检出的 PlateBox 平移回原图坐标系。
+fn offset_plate_box(mut pb: PlateBox, dx: f32, dy: f32) -> PlateBox {
+    for (i, v) in pb.xyxy.iter_mut().enumerate() {
+        *v += if i % 2 == 0 { dx } else { dy };
+    }
+    if let Some(ref mut lm) = pb.landmarks {
+        for pt in lm.iter_mut() {
+            pt[0] += dx;
+            pt[1] += dy;
+        }
+    }
+    pb
 }
 
 /// 带外扩 padding 的车牌裁剪（clamp 到图内，至少 1x1 像素）。
@@ -1050,6 +1115,31 @@ mod tests {
 
     fn models_ready() -> bool {
         [DET_MODEL, REC_MODEL, TEST_IMG].iter().all(|p| std::path::Path::new(p).exists())
+    }
+
+    /// 切片坐标还原：xyxy 与关键点都应平移回原图坐标系。
+    #[test]
+    fn offset_plate_box_should_shift_xyxy_and_landmarks() {
+        let pb = PlateBox {
+            xyxy: [10.0, 20.0, 110.0, 60.0],
+            score: 0.9,
+            landmarks: Some([[10.0, 20.0], [110.0, 20.0], [10.0, 60.0], [110.0, 60.0]]),
+        };
+        let out = offset_plate_box(pb, 640.0, 1280.0);
+        assert_eq!(out.xyxy, [650.0, 1300.0, 750.0, 1340.0]);
+        let lm = out.landmarks.unwrap();
+        assert_eq!(lm[0], [650.0, 1300.0], "关键点应同步平移");
+        assert_eq!(lm[3], [750.0, 1340.0]);
+        assert_eq!(out.score, 0.9, "score 不应被平移改动");
+    }
+
+    /// 无关键点时（退化为普通裁剪的路径）平移不应 panic。
+    #[test]
+    fn offset_plate_box_without_landmarks() {
+        let pb = PlateBox { xyxy: [0.0, 0.0, 94.0, 24.0], score: 0.5, landmarks: None };
+        let out = offset_plate_box(pb, 100.0, 200.0);
+        assert_eq!(out.xyxy, [100.0, 200.0, 194.0, 224.0]);
+        assert!(out.landmarks.is_none());
     }
 
     /// 端到端自验：检测框位置合理 + 文本非空 + 置信度过滤 + plate_type 非空。
