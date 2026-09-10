@@ -55,7 +55,7 @@ pub fn create_session_builder_with(
     let mut eps: Vec<ExecutionProviderDispatch> = Vec::new();
 
     match ty {
-        DeviceType::Cuda => add_cuda_ep(&mut eps, config.gpu_device_id, cuda_provider_mode),
+        DeviceType::Cuda => add_cuda_ep(&mut eps, config.gpu_device_id, config.gpu_mem_limit_mb, cuda_provider_mode),
         DeviceType::Tensorrt => add_tensorrt_ep(&mut eps),
         DeviceType::Directml => add_directml_ep(&mut eps),
         DeviceType::Coreml => add_coreml_ep(&mut eps),
@@ -63,11 +63,11 @@ pub fn create_session_builder_with(
         DeviceType::Rocm => add_rocm_ep(&mut eps),
         DeviceType::Auto => {
             tracing::info!(
-                "Auto device: trying enabled GPU EPs (deviceId={}), fallback to CPU",
-                config.gpu_device_id
+                "Auto device: trying enabled GPU EPs (deviceId={}, gpuMemLimitMb={}), fallback to CPU",
+                config.gpu_device_id, config.gpu_mem_limit_mb
             );
             // 平台不适配的 EP 由 fail_silently 在运行时自动忽略
-            add_cuda_ep(&mut eps, config.gpu_device_id, cuda_provider_mode);
+            add_cuda_ep(&mut eps, config.gpu_device_id, config.gpu_mem_limit_mb, cuda_provider_mode);
             add_coreml_ep(&mut eps);
         }
         DeviceType::Cpu => {
@@ -79,20 +79,32 @@ pub fn create_session_builder_with(
 }
 
 /// 推入 CUDA EP（需启用 `cuda` feature；未启用时回退 CPU 并警告）。
-fn add_cuda_ep(eps: &mut Vec<ExecutionProviderDispatch>, device_id: i32, mode: CudaProviderMode) {
+///
+/// `gpu_mem_limit_mb > 0` 时设显存上限（字节 = mb × 1024 × 1024）。
+/// CUDA arena 只增不减：A100 实测单 yolov8n 每 Session ~2.9GB，pool=4 饱和时
+/// 11.4GB；不设上限曾与 vLLM 共存膨胀至 81GB 打死服务（cuBLAS OOM 后永久失败）。
+/// EP 列表 `[CUDA, CPU]` 带 CPU 回退。
+fn add_cuda_ep(
+    eps: &mut Vec<ExecutionProviderDispatch>,
+    device_id: i32,
+    gpu_mem_limit_mb: usize,
+    mode: CudaProviderMode,
+) {
     #[cfg(feature = "cuda")]
     {
-        tracing::info!("Using CUDA provider (deviceId={}, mode={:?})", device_id, mode);
-        eps.push(
-            CUDA::default()
-                .with_device_id(device_id)
-                .build()
-                .fail_silently(),
+        tracing::info!(
+            "Using CUDA provider (deviceId={}, gpuMemLimitMb={}, mode={:?})",
+            device_id, gpu_mem_limit_mb, mode
         );
+        let mut cuda = CUDA::default().with_device_id(device_id);
+        if gpu_mem_limit_mb > 0 {
+            cuda = cuda.with_memory_limit(gpu_mem_limit_mb * 1024 * 1024);
+        }
+        eps.push(cuda.build().fail_silently());
     }
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (eps, device_id, mode);
+        let _ = (eps, device_id, gpu_mem_limit_mb, mode);
         tracing::warn!("CUDA not compiled in (missing `cuda` feature), falling back to CPU");
     }
 }

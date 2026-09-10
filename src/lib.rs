@@ -47,7 +47,7 @@ pub mod util;
 
 pub use core::{
     builder, AsyncBatchOptimizer, BaseOnnxEngine, DeviceType, DynEngine, ModelType,
-    OnnxInferenceEngine, OnnxRuntimeConfig,
+    OnnxInferenceEngine, OnnxRuntimeConfig, set_global_gpu_mem_limit,
 };
 // 新引擎（姿态 / 人脸 / 深度 / 风格迁移）的工厂入口在 crate 根直接可用；
 // 全部工厂函数见 `core::factory`。

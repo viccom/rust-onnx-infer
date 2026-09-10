@@ -27,4 +27,7 @@ pub use factory::{
     create_yoloe_engine, create_yoloe_runtime_engine, DynEngine, EngineBuilder,
 };
 pub use model_type::ModelType;
-pub use runtime_config::{OnnxRuntimeConfig, DEFAULT_GPU_DEVICE_ID, DEFAULT_INTRA_OP_THREADS, DEFAULT_INTER_OP_THREADS};
+pub use runtime_config::{
+    global_gpu_mem_limit_mb, set_global_gpu_mem_limit, OnnxRuntimeConfig, DEFAULT_GPU_DEVICE_ID,
+    DEFAULT_INTRA_OP_THREADS, DEFAULT_INTER_OP_THREADS,
+};
