@@ -12,7 +12,7 @@ categories = ["computer-vision", "multimedia::images", "science"]
 
 [dependencies]
 # rc 期间 API 仍会变动，钉死精确版本；二进制获取方式与执行提供器经 [features] 透传给引入方决定
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "tracing", "copy-dylibs", "tls-native", "api-27"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "tracing", "copy-dylibs", "tls-native", "api-26"] }
 image = "0.25"
 fast_image_resize = { version = "6", features = ["image"] }
 rayon = "1"
