@@ -67,12 +67,11 @@ const REC_STD: [f32; 3] = [0.5, 0.5, 0.5];
 
 /// CTC blank 字符固定在字典第 0 位。
 const CTC_BLANK_INDEX: usize = 0;
-/// Pipeline 里从原图裁文本行时的四周 padding（像素）。
-const REGION_CROP_PADDING: i32 = 3;
 
 /// 文本区域（DBNet 检测结果）。
 ///
-/// 轴对齐实现下 `quad` 为矩形四角，顺序：左上 → 右上 → 右下 → 左下。
+/// `quad` 为旋转四角（PCA 主轴 + DB unclip 外扩），顺序：p0→p1 沿文字方向（长轴），
+/// p0→p3 / p1→p2 沿短轴；水平文字时退化为矩形四角。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextRegion {
     /// 四角坐标（原图像素坐标）。
