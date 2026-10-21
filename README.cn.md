@@ -2,7 +2,7 @@
 
 # rust-onnx-infer
 
-**一个 crate，40+ 视觉引擎，零原生依赖。**
+**一个 crate，40+ 视觉与文本引擎，零原生依赖。**
 
 基于 ONNX Runtime 的生产级纯 Rust 推理库 —— 从 YOLO 检测、SAM 分割到 Grounding DINO
 开放词表、BiRefNet 抠图、ArcFace 人脸识别、RoMaV2 特征匹配，40+ 引擎共享同一套
@@ -106,6 +106,7 @@ cargo run --example onnx_inference_example
 | **人脸精细关键点** | insightface 2d106det（106 点，YuNet 串联） |
 | **手部** | MediaPipe Palm 检测（≤4 手）+ RTMPose-hand 21 关键点 |
 | **全身关键点** | RTMPose-m WholeBody 133 点（body17+foot6+face68+hand42） |
+| **文本 Embedding** | bge-small-zh-v1.5（BERT WordPiece 分词，512 维 CLS 池化 + L2 归一化向量） |
 
 ## 模块结构
 
@@ -147,6 +148,7 @@ cargo run --example onnx_inference_example
 | `yoloe/` | 11s/26n 文本烘焙版、rt 编码器+检测器、文本编码器（text_encoder/tpe_head/clip_tokenizer） |
 | `sam/` `sam2/` | mobile_sam、sam2_fused |
 | `grounding_dino/` | dinor50 tiny + BERT tokenizer |
+| `bge-small-zh-v1.5/` | 文本 Embedding：model.onnx + tokenizer.json（Xenova 导出） |
 | `pose/` `pose_rt/` | yolov8n-pose、yolo26n-pose、rtmo_s |
 | `face_detection/` `face_recognition/` `face_attribute/` `face_liveness/` `face_landmark106/` | yunet、sface、age_gender+emotion、CDCN 活体、2d106det |
 | `hand/` `wholebody/` | palm 检测 + rtmpose-hand 21 点、rtmpose-wholebody 133 点 |

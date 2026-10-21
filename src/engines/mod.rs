@@ -36,6 +36,7 @@ pub mod qr_detector;
 pub mod real_esrgan;
 pub mod reid;
 pub mod table_recognition;
+pub mod text;
 pub mod roma_v2;
 pub mod sam;
 pub mod semantic_segmentation;

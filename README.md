@@ -2,7 +2,7 @@
 
 # rust-onnx-infer
 
-**One crate. 40+ vision engines. Zero native dependencies.**
+**One crate. 40+ engines for vision & text. Zero native dependencies.**
 
 Production-grade ONNX Runtime inference in pure Rust — from YOLO detection and SAM segmentation
 to Grounding DINO, BiRefNet matting, ArcFace face recognition and RoMaV2 matching.
@@ -108,6 +108,7 @@ cargo run --example onnx_inference_example
 | **Fine face landmarks** | insightface 2d106det (106 points, chained after YuNet) |
 | **Hand** | MediaPipe Palm detection (up to 4 hands) + RTMPose-hand 21 keypoints |
 | **Whole-body keypoints** | RTMPose-m WholeBody 133 points (body17 + foot6 + face68 + hand42) |
+| **Text embedding** | bge-small-zh-v1.5 (BERT WordPiece tokenizer, 512-d CLS-pooled + L2-normalized embeddings) |
 
 ## Module layout
 
@@ -156,6 +157,7 @@ loose test assets only):
 | `yoloe/` | 11s / 26n text-baked, rt encoder + detector, text encoder (text_encoder / tpe_head / clip_tokenizer) |
 | `sam/` `sam2/` | mobile_sam, sam2_fused |
 | `grounding_dino/` | dinor50 tiny + BERT tokenizer |
+| `bge-small-zh-v1.5/` | Text embedding: model.onnx + tokenizer.json (Xenova export) |
 | `pose/` `pose_rt/` | yolov8n-pose, yolo26n-pose, rtmo_s |
 | `face_detection/` `face_recognition/` `face_attribute/` `face_liveness/` `face_landmark106/` | yunet, sface, age_gender + emotion, CDCN liveness, 2d106det |
 | `hand/` `wholebody/` | palm detection + rtmpose-hand 21 points, rtmpose-wholebody 133 points |
