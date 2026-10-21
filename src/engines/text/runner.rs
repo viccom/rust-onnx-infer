@@ -113,6 +113,17 @@ pub(crate) fn to_i64_tensors(
     ))
 }
 
+/// 模型是否声明 `token_type_ids` 输入（BERT 族三输入 vs 两输入导出；
+/// 纯逻辑，可无模型单测）。
+///
+/// 已知形态：bge-small-zh（三输入）/ jina-embeddings-v2-base-zh（两输入，
+/// JinaBERT 导出无 token_type），2026-10-21 双语 A/B 实测。
+pub(crate) fn has_token_type_input(input_names: &[String]) -> bool {
+    input_names
+        .iter()
+        .any(|n| n == IN_TOKEN_TYPE_IDS)
+}
+
 /// 直跑输出快照：f32 平铺数据 + 运行时 shape（`snapshot_f32` 同款语义，附带形状）。
 pub(crate) struct OutputSnapshot {
     pub(crate) data: Vec<f32>,
@@ -130,6 +141,8 @@ pub(crate) struct TextSessionRunner {
     tokenizer: Tokenizer,
     max_length: usize,
     dim: usize,
+    /// session 是否声明 `token_type_ids` 输入（构造期判定，run 按此分支组装）。
+    has_token_type_ids: bool,
 }
 
 impl TextSessionRunner {
@@ -163,9 +176,15 @@ impl TextSessionRunner {
             }))
             .map_err(|e| VisionError::Tokenizer(format!("配置 truncation 失败: {e}")))?;
 
-        // dim 解析：构造期读输出声明 shape 末维
-        let dim = {
+        // 构造期同一把锁内解析：dim（输出末维）+ 是否声明 token_type_ids 输入
+        let (dim, has_token_type_ids) = {
             let session = base.session.lock().unwrap();
+            let input_names: Vec<String> = session
+                .inputs()
+                .iter()
+                .map(|i| i.name().to_string())
+                .collect();
+            let has_tti = has_token_type_input(&input_names);
             let out = session
                 .outputs()
                 .iter()
@@ -192,11 +211,11 @@ impl TextSessionRunner {
                     "输出 '{OUT_LAST_HIDDEN_STATE}' 末维非静态，无法解析 dim: shape={dims:?}"
                 )));
             }
-            last as usize
+            (last as usize, has_tti)
         };
 
         tracing::info!(
-            "Text session runner initialized: model='{}', outputs={:?}, dim={dim}, max_length={max_length}",
+            "Text session runner initialized: model='{}', inputs含token_type_ids={has_token_type_ids}, outputs={:?}, dim={dim}, max_length={max_length}",
             model_path.as_ref().display(),
             base.output_names()
         );
@@ -205,6 +224,7 @@ impl TextSessionRunner {
             tokenizer,
             max_length,
             dim,
+            has_token_type_ids,
         })
     }
 
@@ -225,14 +245,24 @@ impl TextSessionRunner {
 
     /// 直跑并按名取 f32 输出快照（锁 session，`ort::inputs!` 命名直跑；
     /// 混合 int64 输入无法走 `BaseOnnxEngine::run_named`，grounding_dino 同款出路）。
+    ///
+    /// 按 session 声明的输入组装喂入：无 `token_type_ids` 的导出不喂该输入
+    /// （多余输入会被 ORT 拒绝），分支在构造期由 [`has_token_type_input`] 判定。
     pub(crate) fn run(&self, b: &EncodedBatch, output_name: &str) -> Result<OutputSnapshot> {
         let (ids, mask, types) = to_i64_tensors(b)?;
         let mut session = self.base.session.lock().unwrap();
-        let outputs = session.run(ort::inputs![
-            IN_INPUT_IDS      => ids,
-            IN_ATTENTION_MASK => mask,
-            IN_TOKEN_TYPE_IDS => types,
-        ])?;
+        let outputs = if self.has_token_type_ids {
+            session.run(ort::inputs![
+                IN_INPUT_IDS      => ids,
+                IN_ATTENTION_MASK => mask,
+                IN_TOKEN_TYPE_IDS => types,
+            ])?
+        } else {
+            session.run(ort::inputs![
+                IN_INPUT_IDS      => ids,
+                IN_ATTENTION_MASK => mask,
+            ])?
+        };
         let value = outputs
             .get(output_name)
             .ok_or_else(|| {
@@ -364,5 +394,27 @@ mod tests {
             matches!(err, VisionError::InvalidArgument(_)),
             "空批次应报 InvalidArgument，实际: {err:?}"
         );
+    }
+
+    #[test]
+    fn has_token_type_input_should_detect_two_input_exports() {
+        // BERT 族三输入（bge 形态）
+        let three = ["input_ids", "attention_mask", "token_type_ids"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        assert!(has_token_type_input(&three));
+        // 两输入导出（jina JinaBERT 形态）
+        let two = ["input_ids", "attention_mask"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        assert!(!has_token_type_input(&two));
+        // 顺序/多余输入不敏感
+        let mixed = ["attention_mask", "extra", "input_ids", "token_type_ids"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        assert!(has_token_type_input(&mixed));
     }
 }

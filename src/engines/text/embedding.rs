@@ -447,4 +447,60 @@ mod tests {
             );
         }
     }
+
+    /// jina-embeddings-v2-base-zh 自验（两输入导出 + MaskedMean 池化路径；
+    /// 缺模型自动跳过）。双语 A/B（2026-10-21）选定模型，与 bge 用例互补
+    /// 覆盖：无 token_type_ids 输入分支、mean 池化、768 维。
+    #[test]
+    fn text_embedding_jina_two_input_model_self_check() {
+        let model_dir = std::env::var("MODEL_DIR").unwrap_or_else(|_| "models".to_string());
+        let dir = std::path::PathBuf::from(&model_dir).join("jina-embeddings-v2-base-zh");
+        let (model_path, tokenizer_path) = (dir.join("model.onnx"), dir.join("tokenizer.json"));
+        if !(model_path.exists() && tokenizer_path.exists()) {
+            eprintln!("[SKIP] jina 模型缺失（{}）", dir.display());
+            return;
+        }
+
+        // jina 官方约定：mean pooling + normalize（1_Pooling/config.json，
+        // mean_tokens=true），768 维
+        let engine = TextEmbeddingEngine::with_options(
+            &model_path,
+            &tokenizer_path,
+            DeviceType::Cpu,
+            PoolingKind::MaskedMean,
+            true,
+            512,
+            OnnxRuntimeConfig::defaults(),
+        )
+        .unwrap();
+
+        assert_eq!(engine.dim(), 768, "jina-v2-base-zh hidden 维度应为 768");
+
+        let v = engine.embed("在海边玩").unwrap();
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-3, "模长应为 1，实际 {norm}");
+
+        // 确定性（两输入分支 + mean 池化路径）
+        let v2 = engine.embed("在海边玩").unwrap();
+        assert!(
+            v.iter().zip(v2.iter()).all(|(a, b)| a.to_bits() == b.to_bits()),
+            "同条两次 embed() 应逐位相等"
+        );
+
+        // 双语判别（A/B 探针实测锚点：中文正对 0.43 / 负对 0.01；英文 0.53 / 0.10）
+        let batch = engine
+            .embed_batch(&["在海边玩", "沙滩上堆城堡", "playing on the beach", "financial spreadsheet"])
+            .unwrap();
+        let cos = |x: &[f32], y: &[f32]| -> f32 {
+            let d: f32 = x.iter().zip(y).map(|(p, q)| p * q).sum();
+            let nx: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let ny: f32 = y.iter().map(|v| v * v).sum::<f32>().sqrt();
+            d / (nx * ny)
+        };
+        let zh = cos(&batch[0], &batch[1]);
+        let en = cos(&batch[2], &batch[3]);
+        eprintln!("jina 自验：cos(中文正对)={zh:.4} cos(英文负对)={en:.4}");
+        assert!(zh > 0.3, "中文语义对应 >0.3，实际 {zh:.4}");
+        assert!(en < 0.3, "英文语义负对应 <0.3，实际 {en:.4}");
+    }
 }
