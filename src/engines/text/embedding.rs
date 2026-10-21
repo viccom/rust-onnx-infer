@@ -39,7 +39,8 @@ pub enum PoolingKind {
     MaskedMean,
     /// 直接读模型导出的池化输出分支（`pooler_output`，[B,H]）。
     /// 本批 bge 导出**无**此分支（仅 `last_hidden_state`）；其他导出含池化分支时
-    /// 选此模式，缺分支则在推理时报错。
+    /// 选此模式。**仍要求模型导出 `last_hidden_state`**——`dim` 在构造期从其
+    /// 声明 shape 解析（runner.rs），缺该分支在**构造期**即报错（而非推理期）。
     PooledOutput,
 }
 

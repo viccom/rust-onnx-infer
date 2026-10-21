@@ -49,3 +49,11 @@ pub mod embedding;
 pub mod runner;
 
 pub use embedding::{PoolingKind, TextEmbeddingEngine};
+
+// 编译期锁定：下游引擎池以 Arc 共享并发调用，本引擎必须 Send + Sync。
+// 引擎未实现任何带 Send+Sync bound 的 trait（设计 §5），失去 grounding_dino
+// 那种 trait bound 天然强制，须显式断言——含 TextSessionRunner 字段，一层锁两层。
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<TextEmbeddingEngine>();
+};
