@@ -179,4 +179,86 @@ mod tests {
         };
         assert!(validate_logits_shape(&bad_rank, 2).is_err());
     }
+
+    // ==================== 真实模型自验（缺模型自动跳过，embedding.rs 同款） ====================
+
+    /// 固定判别 fixture（设计 §11.2 验收对，阈值来自 2026-10-22 三模型实测标定）：
+    /// 正对 `("孩子在沙滩堆城堡", "小女孩用沙子堆了一座城堡")` → sigmoid > 0.6
+    /// （int8 实测 0.778-0.842）；负对 `(..., "季度财务报表数据汇总")` → < 0.1
+    /// （实测 0.024-0.028）；正负间隔 > 0.5（实测 0.75+）。
+    const FIXTURE_QUERY: &str = "孩子在沙滩堆城堡";
+    const FIXTURE_POS: &str = "小女孩用沙子堆了一座城堡";
+    const FIXTURE_NEG: &str = "季度财务报表数据汇总";
+
+    /// jina-reranker-v2-base-multilingual int8 自验（缺模型自动跳过）。
+    ///
+    /// 1. 判别：正对 > 0.6、负对 < 0.1、间隔 > 0.5（阈值同设计 §11.2）；
+    /// 2. 两输入不喂 token_type：该模型只有 input_ids/attention_mask 两个输入，
+    ///    构造成功 + rerank 成功即证明（喂了会报错）；
+    /// 3. 输出形状：scores.len() == 2（输入序、长度 == docs.len()）。
+    ///
+    /// 运行：`cargo test --lib text_reranking -- --nocapture`（模型放
+    /// `models/jina-reranker-v2-base-multilingual/` 或 `MODEL_DIR` 指向处）。
+    #[test]
+    fn text_reranking_jina_int8_model_self_check() {
+        let model_dir = std::env::var("MODEL_DIR").unwrap_or_else(|_| "models".to_string());
+        let dir = std::path::PathBuf::from(&model_dir).join("jina-reranker-v2-base-multilingual");
+        let (model_path, tokenizer_path) = (dir.join("model_int8.onnx"), dir.join("tokenizer.json"));
+        if !(model_path.exists() && tokenizer_path.exists()) {
+            eprintln!("[SKIP] jina reranker 模型缺失（{}）", dir.display());
+            return;
+        }
+
+        let engine = TextRerankingEngine::with_options(
+            &model_path,
+            &tokenizer_path,
+            DeviceType::Cpu,
+            512,
+            OnnxRuntimeConfig::defaults(),
+        )
+        .unwrap();
+
+        // 2（两输入路径）+ 1/3（判别与形状）
+        let scores = engine
+            .rerank(FIXTURE_QUERY, &[FIXTURE_POS, FIXTURE_NEG])
+            .unwrap();
+        assert_eq!(scores.len(), 2, "分数数应等于 docs 数（输入序）");
+        let (pos, neg) = (scores[0], scores[1]);
+        eprintln!("jina int8 reranker 自验：正对={pos:.4} 负对={neg:.4} 间隔={:.4}", pos - neg);
+        assert!(pos > 0.6, "正对应 >0.6（设计 §11.2），实际 {pos:.4}");
+        assert!(neg < 0.1, "负对应 <0.1，实际 {neg:.4}");
+        assert!(pos - neg > 0.5, "正负间隔应 >0.5，实际 {:.4}", pos - neg);
+    }
+
+    /// bge-reranker-base fp32 自验（中文 cross-encoder，同接口形态；缺模型自动
+    /// 跳过）。三条断言同 jina 用例（2026-10-22 实测正 0.999 / 负 0.000）。
+    #[test]
+    fn text_reranking_bge_fp32_model_self_check() {
+        let model_dir = std::env::var("MODEL_DIR").unwrap_or_else(|_| "models".to_string());
+        let dir = std::path::PathBuf::from(&model_dir).join("bge-reranker-base");
+        let (model_path, tokenizer_path) = (dir.join("model_fp32.onnx"), dir.join("tokenizer.json"));
+        if !(model_path.exists() && tokenizer_path.exists()) {
+            eprintln!("[SKIP] bge reranker 模型缺失（{}）", dir.display());
+            return;
+        }
+
+        let engine = TextRerankingEngine::with_options(
+            &model_path,
+            &tokenizer_path,
+            DeviceType::Cpu,
+            512,
+            OnnxRuntimeConfig::defaults(),
+        )
+        .unwrap();
+
+        let scores = engine
+            .rerank(FIXTURE_QUERY, &[FIXTURE_POS, FIXTURE_NEG])
+            .unwrap();
+        assert_eq!(scores.len(), 2, "分数数应等于 docs 数（输入序）");
+        let (pos, neg) = (scores[0], scores[1]);
+        eprintln!("bge fp32 reranker 自验：正对={pos:.4} 负对={neg:.4} 间隔={:.4}", pos - neg);
+        assert!(pos > 0.6, "正对应 >0.6（设计 §11.2），实际 {pos:.4}");
+        assert!(neg < 0.1, "负对应 <0.1，实际 {neg:.4}");
+        assert!(pos - neg > 0.5, "正负间隔应 >0.5，实际 {:.4}", pos - neg);
+    }
 }

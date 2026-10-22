@@ -107,6 +107,8 @@ cargo run --example onnx_inference_example
 | **手部** | MediaPipe Palm 检测（≤4 手）+ RTMPose-hand 21 关键点 |
 | **全身关键点** | RTMPose-m WholeBody 133 点（body17+foot6+face68+hand42） |
 | **文本 Embedding** | bge-small-zh-v1.5（BERT WordPiece 分词，512 维 CLS 池化 + L2 归一化向量） |
+| **文本 Reranking** | jina-reranker-v2-base-multilingual（int8 ONNX，多语 cross-encoder，logits→sigmoid，pair `<s>q</s></s>d</s>`，`TextRerankingEngine`） |
+| **文本 Reranking** | bge-reranker-base（中文 cross-encoder，同接口形态） |
 
 ## 模块结构
 

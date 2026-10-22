@@ -109,6 +109,8 @@ cargo run --example onnx_inference_example
 | **Hand** | MediaPipe Palm detection (up to 4 hands) + RTMPose-hand 21 keypoints |
 | **Whole-body keypoints** | RTMPose-m WholeBody 133 points (body17 + foot6 + face68 + hand42) |
 | **Text embedding** | bge-small-zh-v1.5 (BERT WordPiece tokenizer, 512-d CLS-pooled + L2-normalized embeddings) |
+| **Text reranking** | jina-reranker-v2-base-multilingual (int8 ONNX, multilingual cross-encoder, logits→sigmoid, pair `<s>q</s></s>d</s>`, `TextRerankingEngine`) |
+| **Text reranking** | bge-reranker-base (Chinese cross-encoder, same interface) |
 
 ## Module layout
 
