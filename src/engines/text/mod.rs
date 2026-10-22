@@ -34,6 +34,11 @@
 //!   [`TextEmbeddingEngine::embed_batch`] 批内最长 padding，**同批重放逐位确定**、
 //!   跨批组成变化可能 ulp 漂移（详见 embedding.rs 的确定性口径文档）。
 //!
+//! Reranking（[`reranking::TextRerankingEngine`]）复用同一 runner：query ×
+//! docs pair 编码（[`runner::encode_pairs`]，pad id 从词表解析）→ `logits
+//! [B,1]` → sigmoid 分数；同批重放逐位确定、批组成变化分数会漂移（确定性
+//! 口径详见 reranking.rs 模块注释）。
+//!
 //! # 示例
 //!
 //! ```ignore
@@ -46,9 +51,11 @@
 //! ```
 
 pub mod embedding;
+pub mod reranking;
 pub mod runner;
 
 pub use embedding::{PoolingKind, TextEmbeddingEngine};
+pub use reranking::TextRerankingEngine;
 
 // 编译期锁定：下游引擎池以 Arc 共享并发调用，本引擎必须 Send + Sync。
 // 引擎未实现任何带 Send+Sync bound 的 trait（设计 §5），失去 grounding_dino
@@ -56,4 +63,5 @@ pub use embedding::{PoolingKind, TextEmbeddingEngine};
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<TextEmbeddingEngine>();
+    assert_send_sync::<TextRerankingEngine>();
 };
